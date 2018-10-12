@@ -36,6 +36,7 @@
 
 use float_cmp::ApproxOrdUlps;
 use ndarray::prelude::*;
+use ndarray::{Zip, FoldWhile};
 
 type Simplex = Vec<(f64, Array1<f64>)>;
 
@@ -124,13 +125,15 @@ impl NelderMead {
             let f_n = simplex[n-2].0;
             let f_0 = simplex[0].0;
 
-            let reflected = &centroid + &(alpha * &(&centroid - &simplex[n-1].1));
+            let reflected = self.positive_step(alpha, &centroid, &(&centroid - &simplex[n-1].1));
+            // let reflected = &centroid + &(alpha * &(&centroid - &simplex[n-1].1));
             let f_reflected = func.call(reflected.view());
 
             if f_reflected < f_n && f_reflected > f_0 { // try reflecting the worst point through the centroid
                 self.lean_update(&mut simplex, &mut centroid, reflected, f_reflected);
             } else if f_reflected < f_0 { // try expanding beyond the centroid
-                let expanded = &centroid + &(beta * &(&reflected - &centroid));
+                let expanded = self.positive_step(beta, &centroid, &(&reflected - &centroid));
+                // let expanded = &centroid + &(beta * &(&reflected - &centroid));
                 let f_expanded = func.call(expanded.view());
 
                 if f_expanded < f_reflected {
@@ -139,12 +142,12 @@ impl NelderMead {
                     self.lean_update(&mut simplex, &mut centroid, reflected, f_reflected);
                 }
             } else if f_reflected < f_n1 && f_reflected >= f_n { // try a contraction outwards
-                let contracted = &centroid + &(gamma * (&centroid - &simplex[n-1].1));
+                let contracted = self.positive_step(gamma, &centroid, &(&centroid - &simplex[n-1].1));
+                // let contracted = &centroid + &(gamma * (&centroid - &simplex[n-1].1));
                 let f_contracted = func.call(contracted.view());
                 if f_contracted < f_reflected {
                     self.lean_update(&mut simplex, &mut centroid, contracted, f_contracted);
                 } else {
-                    // shrink
                     self.shrink(&mut simplex, &mut func, delta, &mut centroid);
                 }
             } else { // try a contraction inwards
@@ -154,13 +157,20 @@ impl NelderMead {
                 if f_contracted < f_reflected {
                     self.lean_update(&mut simplex, &mut centroid, contracted, f_contracted);
                 } else {
-                    // shrink
                     self.shrink(&mut simplex, &mut func, delta, &mut centroid);
                 }
             }
             iterations += 1;
         }
         simplex.remove(0).1
+    }
+
+    #[inline]
+    fn positive_step(&self, step: f64, start: &Array1<f64>, direction: &Array1<f64>) -> Array1<f64> {
+        let positive_step = Zip::from(start).and(direction)
+            .fold_while(step, |acc, s,d| if d<&0. && acc > s/d.abs() {FoldWhile::Continue(s/d)} else {FoldWhile::Continue(acc)})
+            .into_inner();
+        start + &(positive_step * direction)
     }
 
     /// Helper function to keep the main loop clean. Resolves default values that can
