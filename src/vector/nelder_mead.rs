@@ -158,7 +158,7 @@ impl NelderMead {
     #[inline]
     fn positive_step(&self, step: f64, start: &Array1<f64>, direction: &Array1<f64>) -> Array1<f64> {
         let positive_step = Zip::from(start).and(direction)
-            .fold_while(step, |acc, s,d| if d<&0. && acc > s/d.abs() {FoldWhile::Continue(s/d)} else {FoldWhile::Continue(acc)})
+            .fold_while(step, |acc, s,d| if d<&0. && acc > s/d.abs() {FoldWhile::Continue(s/d.abs())} else {FoldWhile::Continue(acc)})
             .into_inner();
         start + &(positive_step * direction)
     }
