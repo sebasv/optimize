@@ -36,7 +36,7 @@
 
 use float_cmp::ApproxOrdUlps;
 use ndarray::prelude::*;
-use ::utils::WrappedFunction;
+use ::utils::{WrappedFunction, LinearConstraint};
 
 type Simplex = Vec<(f64, Array1<f64>)>;
 
@@ -72,6 +72,16 @@ pub struct NelderMead {
     /// Absolute error in function values between iterations that is acceptable for convergence.
     #[builder(default = "1e-4f64")]
     pub ftol: f64,
+
+    /// Linear equality constraint on the parameters
+    #[builder(default = "None")]
+    #[builder(setter(into))]
+    pub linear_equality_constraint: Option(LinearConstraint),
+
+    /// Linear inequality constraint on the parameters
+    #[builder(default = "None")]
+    #[builder(setter(into))]
+    pub linear_inequality_constraint: Option(LinearConstraint),
 }
 
 impl NelderMead {

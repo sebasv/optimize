@@ -1,5 +1,13 @@
 use ndarray::prelude::*;
 
+/// Represents a constraint of the form Ax = b or Ax <= b.
+pub struct LinearConstraint {
+    #[warn(non_snake_case)]
+    pub A: Array2<f64>,
+    pub b: Array1<f64>,
+    pub equal: bool
+}
+
 pub struct WrappedFunction<F: Fn(ArrayView1<f64>) -> f64> {
     pub num: usize,
     pub func: F,
