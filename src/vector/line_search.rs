@@ -7,7 +7,7 @@ use utils::WrappedFunction;
 pub struct LineSearch {
     /// Maximum number of iterations allowed before the algorithm terminates
     #[builder(default = "None",setter(into))]
-    pub max_iter: Option<usize>,
+    pub maxiter: Option<usize>,
 
     /// Absolute error in function parameters between iterations that is acceptable for convergence.
     #[builder(default = "1e-8f64")]
@@ -34,7 +34,6 @@ impl LineSearch {
             x += &(step*&direction);
             let f1 = fun.call(x.view());
 
-            println!("{}\t{}", f0, f1);
             if (f1 - f0).abs() < self.ftol || step * direction.mapv(f64::abs).scalar_sum() < self.xtol {break;}
             f0 = f1;
         }
@@ -43,7 +42,7 @@ impl LineSearch {
 
     #[inline]
     fn initialize_parameters(&self, n: usize) -> usize {
-        match self.max_iter {
+        match self.maxiter {
             Some(x) => x,
             None => n * 200
         }
@@ -74,7 +73,6 @@ impl LineSearch {
         let step = Zip::from(start).and(direction)
             .fold_while(step, |acc, s,d| if d<&0. && acc > s/d.abs() {FoldWhile::Continue(s/d.abs())} else {FoldWhile::Continue(acc)})
             .into_inner();
-        println!("step: {}", step);
         step
     }
 }
