@@ -3,3 +3,7 @@
 mod nelder_mead;
 
 pub use self::nelder_mead::NelderMeadBuilder;
+
+mod line_search;
+
+pub use self::line_search::LineSearchBuilder;

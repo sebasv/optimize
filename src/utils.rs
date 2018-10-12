@@ -6,6 +6,13 @@ pub struct WrappedFunction<F: Fn(ArrayView1<f64>) -> f64> {
 }
 
 impl<F: Fn(ArrayView1<f64>) -> f64> WrappedFunction<F> {
+    pub fn new(f: F) -> WrappedFunction<F> {
+        WrappedFunction{
+            num: 0,
+            func: f
+        }
+    }
+
     pub fn call(&mut self, arg: ArrayView1<f64>) -> f64 {
         self.num += 1;
         (self.func)(arg)

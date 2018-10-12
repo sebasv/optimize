@@ -1,70 +1,81 @@
-use ndarray::{ArrayView1, Array1};
+use ndarray::{ArrayView1, Array1, Zip, FoldWhile};
 // use vector::{Bound, Target, Gradient, unbounded_step, approximate_gradient_neg};
-use scalar::GoldenRatio;
+use scalar::GoldenRatioBuilder;
+use utils::WrappedFunction;
 
-pub struct LineSearch<'a> {
-    pub ulps: i64,
-    pub max_iter: usize,
-    pub ftol: f64,
+#[derive(Builder)]
+pub struct LineSearch {
+    /// Maximum number of iterations allowed before the algorithm terminates
+    #[builder(default = "None",setter(into))]
+    pub max_iter: Option<usize>,
+
+    /// Absolute error in function parameters between iterations that is acceptable for convergence.
+    #[builder(default = "1e-8f64")]
     pub xtol: f64,
-    pub bounded_step: &'a Bound<'a>,
-    pub direction: &'a Gradient<'a>,
+
+    /// Absolute error in function values between iterations that is acceptable for convergence.
+    #[builder(default = "1e-8f64")]
+    pub ftol: f64,
 }
 
+// TODO minimize the number of function calls.
+impl LineSearch {
 
-impl<'a> LineSearch<'a> {
-    pub fn new() -> Self {
-        LineSearch {
-            ulps: 1,
-            max_iter: 5000,
-            ftol: 1e-9,
-            xtol: 1e-9,
-            bounded_step: &unbounded_step,
-            direction: &approximate_gradient_neg,
-        }
-    }
+    pub fn minimize<F, G>(&self, f: F, mut x: Array1<f64>, dir: G) -> Array1<f64> 
+    where F: Fn(ArrayView1<f64>) -> f64,
+          G: Fn(ArrayView1<f64>) -> Array1<f64> {
+        let maxiter = self.initialize_parameters(x.len());
+        let mut fun = WrappedFunction::new(f);
+        let mut f0 = fun.call(x.view());
+        for _ in 0..maxiter {
 
-    pub fn minimize(&self, f: &Target, x0: ArrayView1<f64>) -> (Array1<f64>, Status) {
-        let mut x = x0.to_owned();
-        let mut f0 = f(x0);
-        let mut iter = 0;
-        while !self.finished(iter, f0, f1, step + dir.mapv(f64::abs).scalar_sum()) {
-            iter += 1;
-            let dir = (self.direction)(f, x.view());
-            let step = self.iterate(f, x.view(), dir.view());
-            x += &(step*&dir);
-            let f1 = f(x.view());
+            let direction = dir(x.view());
+            let step = self.iterate(&mut fun, f0, &x, &direction);
+            x += &(step*&direction);
+            let f1 = fun.call(x.view());
+
             println!("{}\t{}", f0, f1);
+            if (f1 - f0).abs() < self.ftol || step * direction.mapv(f64::abs).scalar_sum() < self.xtol {break;}
             f0 = f1;
         }
-
-        (x, status)
+        x
     }
 
-    fn iterate(&self, f: &Target, x0: ArrayView1<f64>, dir: ArrayView1<f64>) -> f64 {
-        let mut fprev = f(x0);
-        let mut stepsize = (self.bounded_step)(1.0, dir, x0);
-        let fun = |x| f((&x0 + &(x * &dir)).view());
+    #[inline]
+    fn initialize_parameters(&self, n: usize) -> usize {
+        match self.max_iter {
+            Some(x) => x,
+            None => n * 200
+        }
+    }
+
+    #[inline]
+    fn iterate<F>(&self, f: &mut WrappedFunction<F>, mut fprev: f64, x0: &Array1<f64>, dir: &Array1<f64>) -> f64 
+    where F: Fn(ArrayView1<f64>) -> f64 {
+        let mut stepsize = self.positive_step(1.0, x0, dir);
+        let mut fun = |x| f.call((x0 + &(x * dir)).view());
         let mut fstepped = fun(stepsize);
 
         // find a bracketing interval; double the interval until f stops improving
         while fstepped < fprev {
-            stepsize = (self.bounded_step)(2.0 * stepsize, dir, x0);
+            stepsize = self.positive_step(2.0 * stepsize, x0, dir);
             fprev = fstepped;
             fstepped = fun(stepsize);
         } 
 
-        let mut gr = GoldenRatio::new();
-        gr.ftol = self.ftol;
-        gr.xtol = self.xtol;
-        gr.minimize(&fun, 0.0, stepsize).0
+        let gr = GoldenRatioBuilder::default()
+            .xtol(self.xtol)
+            .build().unwrap();
+        gr.minimize(&mut fun, 0.0, stepsize)
     }
 
     #[inline]
-    fn finished(&self, iter: usize, f0: f64, f1: f64, xdiff: f64) -> Status {
-        (f1 - f0).abs() < self.ftol 
-        || xdiff < self.xtol 
-        || iter > self.max_iter
+    fn positive_step(&self, step: f64, start: &Array1<f64>, direction: &Array1<f64>) -> f64 {
+        let step = Zip::from(start).and(direction)
+            .fold_while(step, |acc, s,d| if d<&0. && acc > s/d.abs() {FoldWhile::Continue(s/d.abs())} else {FoldWhile::Continue(acc)})
+            .into_inner();
+        println!("step: {}", step);
+        step
     }
 }
 
@@ -72,45 +83,48 @@ impl<'a> LineSearch<'a> {
 mod tests {
     use super::*;
     use ndarray::prelude::*;
+    use ::utils::approx_fprime;
 
     #[test]
     fn test_unbounded() {
         let n = 5;
-        let ls = LineSearch::new();
+        let ls = LineSearchBuilder::default().build().unwrap();
         let f = |x: ArrayView1<f64>| (&x - 0.5).mapv(|xi| xi*xi).scalar_sum();
-        let (xout, status) = ls.minimize(&f, Array::ones(n).view());
+        let eps = Array1::ones(n)*1e-8;
+        let g = |x: ArrayView1<f64>| -approx_fprime(x, f, eps.view()); // do gradient descent
+        let xout = ls.minimize(&f, Array::ones(n), g);
 
-        println!("{:?}", status);
         println!("{:?}", xout);
+        println!("{:?}", g(xout.view()));
         assert!(xout.all_close(&(Array::ones(n)/2.0 as f64), 1e-5));
     }
-    #[test]
-    fn test_bounded_on_the_simplex() {
-        let n = 10;
-        let dir = |f: &Target, x: ArrayView1<f64>| {
-            let mut g = approximate_gradient_neg(f, x);
-            // project the gradient on the simplex:
-            let mask = x.iter().zip(&g).map(|(xi, gi)| if *xi > 0.0 || *gi >= 0.0 {1.0} else {0.0}).collect::<Array1<f64>>();
-            g *= &mask; // set the directions at borders pointing outside the border to 0
-            g -= &(g.scalar_sum() * &mask / mask.scalar_sum()); // projection onto the simplex
-            g
-        };
-        let bound = |max_step: f64, x: ArrayView1<f64>, dir: ArrayView1<f64>| {
-            dir.iter().zip(&x)
-            .map(|(d,f)| if *d<0.0 {f/d.abs()} else {max_step})
-            .fold(max_step, |acc, x| if acc < x {acc} else {x})
-        };
-        let f = |x: ArrayView1<f64>| {
-            x.mapv(|xi| xi*xi).scalar_sum()
-        };
-        let mut x0 = Array1::zeros(n);
-        x0[0] = 1.0;
+    // #[test]
+    // fn test_bounded_on_the_simplex() {
+    //     let n = 10;
+    //     let dir = |f: &Target, x: ArrayView1<f64>| {
+    //         let mut g = approximate_gradient_neg(f, x);
+    //         // project the gradient on the simplex:
+    //         let mask = x.iter().zip(&g).map(|(xi, gi)| if *xi > 0.0 || *gi >= 0.0 {1.0} else {0.0}).collect::<Array1<f64>>();
+    //         g *= &mask; // set the directions at borders pointing outside the border to 0
+    //         g -= &(g.scalar_sum() * &mask / mask.scalar_sum()); // projection onto the simplex
+    //         g
+    //     };
+    //     let bound = |max_step: f64, x: ArrayView1<f64>, dir: ArrayView1<f64>| {
+    //         dir.iter().zip(&x)
+    //         .map(|(d,f)| if *d<0.0 {f/d.abs()} else {max_step})
+    //         .fold(max_step, |acc, x| if acc < x {acc} else {x})
+    //     };
+    //     let f = |x: ArrayView1<f64>| {
+    //         x.mapv(|xi| xi*xi).scalar_sum()
+    //     };
+    //     let mut x0 = Array1::zeros(n);
+    //     x0[0] = 1.0;
 
-        let mut ls = LineSearch::new();
-        ls.direction = &dir;
-        ls.bounded_step = &bound;
-        let (xout, status) = ls.minimize(&f, x0.view());
-        println!("{:?}", status);
-        println!("{:?}", xout);
-    }
+    //     let ls = LineSearchBuilder::default().build().unwrap();
+    //     ls.direction = &dir;
+    //     ls.bounded_step = &bound;
+    //     let (xout, status) = ls.minimize(&f, x0.view());
+    //     println!("{:?}", status);
+    //     println!("{:?}", xout);
+    // }
 }

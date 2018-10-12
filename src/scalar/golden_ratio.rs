@@ -38,8 +38,8 @@ impl GoldenRatio {
     
     /// The main minimization routine. Searches for the minimum of `func`
     /// between `left` and `right`.
-    pub fn minimize<F>(&self, func: F, left: f64, right: f64) -> f64 
-    where F: Fn(f64) -> f64 {
+    pub fn minimize<F>(&self, mut func: F, left: f64, right: f64) -> f64 
+    where F: FnMut(f64) -> f64 {
         let mut min = left;
         let mut max = right;
         let mut iter = 0;
@@ -84,6 +84,18 @@ mod tests {
             .build().unwrap();
         let f = |x: f64| (x-0.2).powi(2);
         let res = minimizer.minimize(&f, -1.0, 1.0);
+
+        println!("res: {}", res);
+        assert!( (res - 0.2).abs() <= 1e-7);
+    }
+    #[test]
+    fn golden_ratio_mixed() {
+        let minimizer = GoldenRatioBuilder::default()
+            .xtol(1e-7)
+            .max_iter(1000)
+            .build().unwrap();
+        let f = |x: f64| (x-0.2).powi(2);
+        let res = minimizer.minimize(&f, 1.0, -1.0);
 
         println!("res: {}", res);
         assert!( (res - 0.2).abs() <= 1e-7);
