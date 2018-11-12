@@ -8,23 +8,57 @@ use ndarray::prelude::*;
 
 #[derive(Builder, Debug)]
 pub struct LBFGS {
+    /// If the sum of the absolute values of the gradient is smaller than `gtol`,
+    /// the algorithm terminates.
     /// Smaller is more precise.
     #[builder(default = "1e-8")]
     pub gtol: f64,
 
+    /// The maximum number of iterations.
     /// Larger is more precise.
     #[builder(default = "1500")]
     pub max_iter: usize,
+
+    /// The number of datapoints to use to estimate the inverse hessian.
+    /// Larger is more precise. If `m` is larger than `x0.len()`, then
+    /// `x0.len()` is used.
+    #[builder(default = "5")]
+    pub m: usize,
+
+    /// The maximum step to be taken in the direction determined by the Quasi-Newton
+    /// method.
+    #[builder(default = "2.0")]
+    pub max_step: f64,
+
+    /// The tolerance on x used to terminate the line search.
+    /// Smaller is more precise.
+    #[builder(default = "1e-8")]
+    pub xtol: f64,
 }
 
 impl LBFGS {
+    /// Minimize `func`, starting in `x0`, using a finite-difference approximation of the
+    /// gradient. If you wish to have more control over the finite-difference approximation,
+    /// you should use the `minimize` routine.
+    pub fn minimize_approx_g<F>(&self, func: F, x0: ArrayView1<f64>) -> Array1<f64>
+    where
+        F: Fn(ArrayView1<f64>) -> f64,
+    {
+        let epsilon = Array1::ones(x0.len()) * 1e-9;
+        let grad = |x: ArrayView1<f64>| ::utils::approx_fprime(x, &func, epsilon.view());
+        self.minimize(&func, grad, x0)
+    }
+
+    /// minimize `func`, starting in `x0`, using the gradient function `grad`. Uses a limited-memory
+    /// version of BFGS to approximate the inverse Hessian. The search direction is Quasi-Newton, the
+    /// stepsize is determined by a bounded line search.
     pub fn minimize<F, G>(&self, func: F, grad: G, x0: ArrayView1<f64>) -> Array1<f64>
     where
         F: Fn(ArrayView1<f64>) -> f64,
         G: Fn(ArrayView1<f64>) -> Array1<f64>,
     {
         let mut iter = 0;
-        let m = x0.len().min(5);
+        let m = x0.len().min(self.m);
 
         let mut hist = RobinVec::new();
 
@@ -34,9 +68,12 @@ impl LBFGS {
         loop {
             let dir = self.quasi_update(&g, &hist);
             let a = {
-                let min = ::scalar::GoldenRatioBuilder::default().build().unwrap();
+                let min = ::scalar::GoldenRatioBuilder::default()
+                    .xtol(self.xtol)
+                    .build()
+                    .unwrap();
                 let f = |a: f64| func((&x + &(a * &dir)).view());
-                min.minimize_bracket(&f, -2.0, 0.0)
+                min.minimize_bracket(&f, -self.max_step, 0.0)
             };
             let x_new = &x + &(a * &dir);
             let g_new = grad(x_new.view());
@@ -162,6 +199,17 @@ mod test {
         let x0 = Array1::ones(center.len());
         let xmin = min.minimize(&f, &g, x0.view());
         println!("{:?}", xmin);
+        assert!(xmin.all_close(&center, 1e-5))
+    }
+
+    #[test]
+    fn approx_minimize() {
+        let center = arr1(&[0.9, 1.3, 0.5]);
+        let min = LBFGSBuilder::default().build().unwrap();
+        let f = |x: ArrayView1<f64>| (&x - &center).mapv(|xi| -(-xi * xi).exp()).scalar_sum();
+        let x0 = Array1::ones(center.len());
+        let xmin = min.minimize_approx_g(&f, x0.view());
+        println!("approx: {:?}", xmin);
         assert!(xmin.all_close(&center, 1e-5))
     }
 
